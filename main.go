@@ -60,7 +60,7 @@ var times = flag.Int("config.scrape-times", 0, "how many times to scrape before 
 var roleArn = flag.String("config.role-arn", "", "ARN of the role to assume when scraping the AWS API (optional)")
 var prometheusPortLabel = flag.String("config.port-label", "PROMETHEUS_EXPORTER_PORT", "Docker label to define the scrape port of the application (if missing an application won't be scraped)")
 var prometheusPathLabel = flag.String("config.path-label", "PROMETHEUS_EXPORTER_PATH", "Docker label to define the scrape path of the application")
-var prometheusSchemeLabel= flag.String("config.scheme-label", "PROMETHEUS_EXPORTER_SCHEME", "Docker label to define the scheme of the target application")
+var prometheusSchemeLabel = flag.String("config.scheme-label", "PROMETHEUS_EXPORTER_SCHEME", "Docker label to define the scheme of the target application")
 var prometheusFilterLabel = flag.String("config.filter-label", "", "Docker label (and optionally value) to require to scrape the application")
 var prometheusServerNameLabel = flag.String("config.server-name-label", "PROMETHEUS_EXPORTER_SERVER_NAME", "Docker label to define the server name")
 var prometheusJobNameLabel = flag.String("config.job-name-label", "PROMETHEUS_EXPORTER_JOB_NAME", "Docker label to define the job name")
@@ -131,25 +131,26 @@ type PrometheusTaskInfo struct {
 // container in the task has a PROMETHEUS_EXPORTER_PORT
 //
 // Example:
-//     ...
-//             "Name": "apache",
-//             "DockerLabels": {
-//                  "PROMETHEUS_EXPORTER_PORT": "1234"
-//              },
-//     ...
-//              "PortMappings": [
-//                {
-//                  "ContainerPort": 1883,
-//                  "HostPort": 0,
-//                  "Protocol": "tcp"
-//                },
-//                {
-//                  "ContainerPort": 1234,
-//                  "HostPort": 0,
-//                  "Protocol": "tcp"
-//                }
-//              ],
-//     ...
+//
+//	...
+//	        "Name": "apache",
+//	        "DockerLabels": {
+//	             "PROMETHEUS_EXPORTER_PORT": "1234"
+//	         },
+//	...
+//	         "PortMappings": [
+//	           {
+//	             "ContainerPort": 1883,
+//	             "HostPort": 0,
+//	             "Protocol": "tcp"
+//	           },
+//	           {
+//	             "ContainerPort": 1234,
+//	             "HostPort": 0,
+//	             "Protocol": "tcp"
+//	           }
+//	         ],
+//	...
 func (t *AugmentedTask) ExporterInformation() []*PrometheusTaskInfo {
 	ret := []*PrometheusTaskInfo{}
 	var host string
@@ -196,26 +197,26 @@ func (t *AugmentedTask) ExporterInformation() []*PrometheusTaskInfo {
 			// Nope, no match, this container cannot be exported.  We continue.
 			continue
 		}
-
+		if strings.HasPrefix(*i.Name, "aws-guardduty-agent") {
+			// GuardDuty agent containers don't expose Prometheus metrics, so we skip them otherwise
+			// they will be included in the output as duplicate targets
+			continue
+		}
 		var hostPort int32
+
+		// try to find docker label PROMETHEUS_DYNAMIC_EXPORT=1
 		if *prometheusDynamicPortDetection {
 			v, ok := d.DockerLabels[dynamicPortLabel]
-			if !ok || v != "1" {
-				// Nope, no Prometheus-exported port in this container def.
-				// This container is no good. We continue.
-				continue
+			if ok && v == "1" && len(i.NetworkBindings) == 1 {
+				port := i.NetworkBindings[0].HostPort
+				if port != nil {
+					hostPort = *port
+				}
 			}
+		}
 
-			if len(i.NetworkBindings) != 1 {
-				// Dynamic port mapping is only supported with a single binding.
-				// Otherwise, how would we know which port to use?
-				continue
-			}
-
-			if port := i.NetworkBindings[0].HostPort; port != nil {
-				hostPort = *port
-			}
-		} else {
+		// try to get the port from docker label PROMETHEUS_EXPORTER_PORT
+		if hostPort == 0 {
 			v, ok := d.DockerLabels[*prometheusPortLabel]
 			if !ok {
 				// Nope, no Prometheus-exported port in this container def.
@@ -297,7 +298,7 @@ func (t *AugmentedTask) ExporterInformation() []*PrometheusTaskInfo {
 
 		scheme, ok = d.DockerLabels[*prometheusSchemeLabel]
 		if ok {
-		    labels.Scheme = scheme
+			labels.Scheme = scheme
 		}
 
 		ret = append(ret, &PrometheusTaskInfo{
